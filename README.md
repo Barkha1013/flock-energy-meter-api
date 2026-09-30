@@ -1,148 +1,139 @@
 # Flock Meter Data API
 
-A small FastAPI service that gives engineers a stable, documented way to query normalized smart-meter records. It stores meter identity, network placement, and consumption readings in SQLite. The HTTP API is read-oriented; a separate import route is the seam for loading a portal snapshot into the local database.
+A documented FastAPI service that reads meter, distribution-transformer, network-hierarchy, and energy data from Urja Meter Ops. It keeps the bulk meter and transformer snapshot in SQLite. Recent energy readings are fetched from the portal when requested and cached locally. API consumers can query the service without opening the portal.
 
-> **Integration status:** the assignment portal's public sign-in page was reachable during this work, but its sign-in POST returned HTTP 403 from the inspection environment. Authenticated screens, source endpoints, and real field names could not be verified. This repository therefore does not claim to be a working portal scraper. `PROTOCOL.md` records what was observed and what remains to investigate. The service can be run and evaluated with normalized data supplied to its import endpoint.
+## Current portal-backed behavior
 
-## What is included
+The service uses the portal's observed read endpoints. Run the included sync command once to populate meters, coordinates, nameplate fields, network hierarchy, and transformers. The readings endpoint fetches the selected meter's recent half-hourly registers from the portal and stores them in SQLite. If the portal is temporarily unavailable, it returns cached readings with `X-Data-Stale: true` when a cache exists.
 
-- `app/main.py` creates the FastAPI app and database tables; `app/api.py` defines HTTP routes; `app/schemas.py` validates public input/output; `app/services.py` owns the import transaction; `app/repositories.py` contains read queries; `app/models.py` and `app/database.py` define persistence; `app/config.py` reads settings.
-- `scripts/export_openapi.py` writes the generated schema to the repository root.
-- `PROTOCOL.md` explains the observed portal behavior and the unverified parts of the integration.
-- `openapi.json` is the generated OpenAPI 3.1 contract for this service.
-- SQLite is created automatically at `./data/meters.db` by default.
+Portal credentials are read only from local environment variables. They are not stored in this repository. No portal meter records or exported dataset are committed.
 
-## Requirements
+## Project layout
+
+- `app/main.py`: FastAPI app and application lifecycle.
+- `app/api.py`: documented, versioned HTTP routes.
+- `app/portal_client.py`: portal session, signed export, transformer paging, and energy reads.
+- `app/sync.py`: maps the portal snapshot into SQLite; also provides the `python -m app.sync` command.
+- `app/services.py`: source timestamp normalization and cached-reading upserts.
+- `app/repositories.py`: SQLite query functions.
+- `app/models.py` and `app/database.py`: relational read model and sessions.
+- `app/schemas.py`: public response schemas.
+- `PROTOCOL.md`: observed portal navigation, endpoints, and quirks.
+- `openapi.json`: generated OpenAPI 3.1 contract.
+
+## Requirements and setup
 
 - Python 3.11 or newer
-- `pip` (or another installer that reads `pyproject.toml`)
+- Network access to the portal
+- The portal username and password supplied for the assignment
 
-## Install and run
-
-```bash
+```powershell
 python -m venv .venv
-# Windows PowerShell
 .\.venv\Scripts\Activate.ps1
-# macOS/Linux: source .venv/bin/activate
 python -m pip install -e .
+Copy-Item .env.example .env
+```
+
+Edit `.env` locally and set `PORTAL_USERNAME` and `PORTAL_PASSWORD`. Keep `.env` private; it is ignored by Git. The service defaults to `sqlite:///./data/meters.db` and creates the `data/` directory automatically.
+
+Sync the portal snapshot, then run the API:
+
+```powershell
+python -m app.sync
 uvicorn app.main:app --reload
 ```
 
-The server listens at `http://127.0.0.1:8000`. Browse `/docs` for interactive Swagger UI, `/redoc` for ReDoc, and `/openapi.json` for the live schema. Copy `.env.example` to `.env` to set the SQLite path; the app reads `.env` at startup. The checked-in `openapi.json` can be refreshed with:
+The sync command reads the portal's signed all-meter export and all pages of the transformer list. It does not write to the portal. Meter readings are loaded on demand by the API. Run `python -m app.sync` again to refresh the meter and transformer snapshot.
 
-```bash
+The API listens at `http://127.0.0.1:8000`. Interactive docs are at `/docs` and `/redoc`; the live schema is at `/openapi.json`. Regenerate the checked-in contract with:
+
+```powershell
 python scripts/export_openapi.py
 ```
 
-To store the database elsewhere, set `DATABASE_URL`, for example `sqlite:///./data/local.db`. The configured directory must be writable. The application creates the default `data/` directory automatically; create a custom database's parent directory before starting if it does not exist:
+## API
 
-```bash
-mkdir data
-```
+All data routes use `/api/v1`. The list routes use offset pagination with default `limit=50` and maximum `limit=200`. Reading timestamps accept timezone-qualified ISO 8601 values and are returned in UTC (`Z`). Portal timestamps are displayed in Jaipur local time and converted to UTC for storage.
 
-## API overview
-
-All data endpoints use `/api/v1`. Reading timestamps must be timezone-qualified ISO 8601 values. Imports normalize them to UTC, and responses return UTC with a `Z` suffix. Confirm the portal's source timezone before mapping its timestamps.
-
-| Method | Path | Purpose |
+| Method | Endpoint | Purpose |
 |---|---|---|
-| `GET` | `/health` | Process-level availability check |
-| `GET` | `/api/v1/meters` | List meters with optional `status`, `network_node_id`, `limit`, and `offset` |
-| `GET` | `/api/v1/meters/{meter_id}` | Meter fields and its network node |
-| `GET` | `/api/v1/meters/{meter_id}/readings` | Consumption readings, optionally bounded by inclusive `start` and `end` timestamps |
-| `POST` | `/api/v1/imports` | Upsert a normalized snapshot into SQLite |
+| `GET` | `/health` | Service availability |
+| `GET` | `/api/v1/meters` | Search and filter synchronized meters |
+| `GET` | `/api/v1/meters/{meter_id}` | Meter nameplate, coordinates, and full network path |
+| `GET` | `/api/v1/transformers` | Distribution transformers, optionally filtered by `feeder_code` |
+| `GET` | `/api/v1/meters/{meter_id}/readings` | Recent energy registers, optionally bounded by `start` and `end` |
 
-The list response includes `items`, `total`, `limit`, and `offset`. The default page size is 50 and the maximum is 200. Reading results are newest first; the default limit is 100 and maximum is 1000. Missing meter IDs return HTTP 404. `POST /imports` exists for local ingestion and adapter development; it is not a portal write operation and should be protected with authentication before deployment. A network node's parent must exist already or be included in the batch; the importer orders same-batch parents automatically and rejects cycles or missing parents.
+Meter filters include `search` (meter ID or serial substring), `install_status`, `make`, `phase_type`, and `dt_code`. Readings are ordered newest first; their default limit is 100 and maximum is 1000. Missing meter IDs return HTTP 404. If portal access is unavailable and no readings are cached, the readings route returns HTTP 502; when cached data is available, it returns that data with `X-Data-Source: sqlite-cache` and `X-Data-Stale: true`.
 
-### Sample request
-
-With records loaded, request the newest readings for a meter:
+### Example request
 
 ```http
-GET /api/v1/meters/MTR-001/readings?start=2026-01-01T00:00:00Z&limit=24
+GET /api/v1/meters?install_status=Installed&limit=20
+GET /api/v1/meters/{meter_id}/readings?start=2025-01-01T00:00:00Z&limit=48
 ```
 
-Example response shape (illustrative values, not portal data):
+An energy response has this shape (illustrative values):
 
 ```json
 [
-  {"recorded_at": "2026-01-01T00:00:00Z", "consumption_kwh": 0.42},
-  {"recorded_at": "2025-12-31T23:00:00Z", "consumption_kwh": 0.38}
+  {
+    "recorded_at": "2025-01-01T00:00:00Z",
+    "kwh": 1234.5,
+    "kvah": 1400.0,
+    "voltage_r": 230
+  }
 ]
 ```
 
-Load normalized records by posting a JSON body to `/api/v1/imports`. Example:
+Portal `kWh` and `kVAh` values are cumulative register readings, not interval usage. A consumer that needs interval consumption should calculate the difference between adjacent readings and account for meter resets or rollovers.
 
-```json
-{
-  "network_nodes": [
-    {"id": "feeder-7", "name": "Feeder 7", "node_type": "feeder", "parent_id": null}
-  ],
-  "meters": [
-    {
-      "id": "MTR-001", "serial_number": "SN-001", "status": "active",
-      "meter_type": "smart", "latitude": 12.97, "longitude": 77.59,
-      "installed_on": "2025-01-15", "network_node_id": "feeder-7",
-      "readings": [{"recorded_at": "2026-01-01T00:00:00Z", "consumption_kwh": 0.42}]
-    }
-  ]
-}
-```
+## Design decisions and assumptions
 
-## Data model and design choices
+- **SQLite is the local read model.** It keeps evaluation and single-machine setup simple. SQLAlchemy separates persistence from HTTP routes; PostgreSQL is a reasonable next step for concurrent production workloads.
+- **Bulk export for meter metadata.** The portal exposes a signed export containing all 403 meters, which avoids walking 21 UI pages. The API sync maps its nameplate, geo, and hierarchy data into relational tables.
+- **Read energy on demand.** Energy is exposed by a per-meter portal endpoint. Fetching it only when requested avoids making hundreds of requests during initial setup; successful responses are cached in SQLite.
+- **Keep all hierarchy branches.** Codes repeat under different parents in the export. Database node IDs therefore include the full ancestor path; a bare code is not treated as globally unique.
+- **Normalize time once.** Portal timestamps are shown as local Jaipur time, so the adapter interprets unzoned portal timestamps as `Asia/Kolkata`, converts them to UTC, and emits UTC in the API.
+- **Keep source and API field names separate.** Portal names such as `serialNo`, `installStatus`, `voltR`, and `capacityKva` are mapped to readable API names.
+- **Bound results.** List and readings endpoints have explicit page/row limits. Offset pagination is simple at the portal's current data size; cursor pagination is a future option for rapidly changing larger datasets.
 
-- **SQLite** keeps local setup simple and is sufficient for a take-home-sized, single-instance read service. SQLAlchemy isolates persistence so PostgreSQL can replace it if concurrent ingestion or larger workloads require it.
-- **Three entities** keep meter attributes, network hierarchy, and time-series readings separate. A reading is unique per meter and timestamp; re-import updates a matching reading rather than duplicating it.
-- **Stable IDs** are strings because external portal identifiers may not be numeric. IDs and attributes are a proposed normalized contract and must be mapped against the authenticated portal before production use.
-- **Small layers** separate HTTP validation (`schemas.py`/`api.py`), query construction (`repositories.py`), transaction behavior (`services.py`), and storage (`models.py`/`database.py`). This keeps the future portal client replaceable without coupling it to HTTP response formats.
-- **Pagination and bounded readings** prevent an accidental request from returning an unbounded history. The API uses offset pagination for simplicity; cursor pagination would be safer for frequently changing large datasets.
+## Security and operating limits
 
-## Assumptions
-
-- The service should expose meter details, network placement, and recent consumption because these are the data categories named in the assignment background.
-- The local SQLite database is a normalized read model. A source-specific ingestion adapter should map portal fields into the import shape.
-- Meter identifiers are unique; a timestamp identifies at most one reading per meter; consumption is non-negative and measured in kWh.
-- No production identity or authorization scheme was specified. This local prototype has no read-endpoint authentication and must not be exposed publicly as-is. Protect both read and import access before deployment.
-- The source timezone and reading interval are unknown. API consumers should use timezone-qualified timestamps until the portal's actual conventions are established.
+- The API currently has no consumer authentication. Keep it bound to a trusted network or add OIDC/API-key protection before exposing it beyond a local or private environment.
+- The sync command and readings route use portal credentials from `.env`; do not commit that file, browser cookies, signing secrets, or portal exports.
+- The service only calls portal sign-in and documented/read-only data endpoints. It does not modify portal records.
+- SQLite is appropriate for this small assignment dataset and one API process. Use a server database and coordinated background sync before scaling to multiple workers.
 
 ## Intentionally left out
 
-- **Portal login/session client and synchronization job:** authentication succeeded nowhere in the inspection environment; implementing a guessed session or parser would create a misleading integration. `PROTOCOL.md` lists the evidence and next discovery steps.
-- **Real portal data or fabricated seed rows:** the database starts empty. The sample payload is only an API shape illustration.
-- **Authentication, role-based access, rate limits, and deployment configuration:** these need the utility's identity, network, and operational requirements. Do not put portal credentials in source control.
-- **Map, anomaly detection, cache, and background scheduling:** useful follow-on features, but they depend on verified coordinates, data volume, and refresh semantics.
-
-## Improvements with more time
-
-1. Inspect the authenticated portal in a supported browser session; record exact navigation, network requests, field names, units, timezone, paging behavior, and session expiry.
-2. Build a narrowly scoped read-only portal client with explicit timeouts, bounded retries, session refresh, and clear source errors; map its results into the normalized model.
-3. Add automated contract, repository, and endpoint tests, plus fixture-based tests for malformed and inconsistent source records.
-4. Add API-key or OIDC authentication, audit logs, request limits, and deployment health/readiness checks.
-5. Move to PostgreSQL and cursor pagination if the dataset or concurrent read/write workload outgrows SQLite; add a measurable freshness policy before caching.
+- A scheduled sync worker: refreshing the bulk snapshot is an explicit CLI action so freshness is visible and easy to control.
+- A map, anomaly detection, and cache expiry policy: these need product decisions about location use, anomaly definitions, and acceptable staleness.
+- Authentication for API consumers: no identity requirements were specified, so the README warns against public deployment without adding a guessed scheme.
+- Automated tests: the take-home prioritizes investigation and reasoning. The OpenAPI document is generated from the live FastAPI route/schema definitions.
 
 ## Reflection
 
 ### What assumptions did you make?
 
-I treated the assignment's named data categories as the initial domain and modeled meters, network nodes, and timestamped kWh readings. I assumed stable string identifiers and one reading per meter at a timestamp. I did not assume the portal's actual fields, hierarchy labels, unit conventions, or refresh cadence because I could not reach an authenticated screen.
+I assumed the portal's Jaipur timestamps use India Standard Time, the bulk export is the authoritative meter snapshot, and the `kWh`/`kVAh` columns are cumulative register values. The portal UI and export were inspected to confirm field names; hierarchy node identity is path-scoped because codes repeat across branches.
 
 ### Which part was most difficult, and how did you get unstuck?
 
-The hard part was distinguishing the API we can design from the undocumented behavior we need to discover in the legacy portal. I inspected the public sign-in page and attempted its normal form submission with the supplied take-home credentials. The hosted instance returned 403 on that request, so I stopped short of guessing hidden routes and wrote the integration boundary and evidence into `PROTOCOL.md`.
+The difficult part was moving from the visible portal to its read protocol. I inspected the authenticated meter and transformer pages, used the normal bulk export, and read the page's bundled client code to identify the data routes and request-signing format. The implemented client then retrieved 403 meters, 40 transformers, and 337 readings for one meter without putting source data in the repository.
 
 ### If you had another day, what would you improve?
 
-I would repeat portal discovery in an approved interactive session, then implement and fixture-test the smallest read-only synchronization path. After verifying source semantics, I would add authentication, freshness reporting, and an automated test suite.
+I would add automated tests using sanitized fixtures, measure API freshness under portal timeouts, add a scheduled sync with clear freshness reporting, and add an authentication scheme before deployment to a shared network.
 
 ### What mistake did you make while solving this?
 
-I initially treated the assignment's description of meter, network, and consumption data as sufficient to shape the API. Those categories describe the product need, not verified portal fields. I corrected the documentation to label the schema as a proposal and the integration as incomplete.
+I initially treated the assignment's broad data categories as if they were verified portal fields. During integration I also missed the same-origin `Origin` header required by the sign-in form, which caused an initial 403. I corrected the request after comparing it with the browser action and then fetched the portal records successfully.
 
 ### If you were reviewing your own submission, what would you criticise?
 
-The central risk is that this is a well-shaped API and local data store, not a proven end-to-end bridge to the running portal. It also lacks automated tests and authentication, and its timestamp handling needs a confirmed source timezone before consumers rely on time-range queries.
+The adapter has been exercised against the portal's sign-in, bulk export, transformer pages, and one meter's recent energy response. It still needs automated tests, consumer authentication, and a scheduled freshness policy before production use.
 
 ## Further reading
 
-- [Portal investigation and protocol notes](PROTOCOL.md)
+- [Portal protocol investigation](PROTOCOL.md)
 - [OpenAPI 3.1 contract](openapi.json)
