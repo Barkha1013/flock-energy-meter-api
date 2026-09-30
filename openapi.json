@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Flock Meter Data API",
-    "description": "A read API for normalized smart-meter, network placement, and consumption data. Portal-specific discovery and synchronization are documented in PROTOCOL.md.",
+    "description": "A read API for Urja Meter Ops meter, transformer, network-hierarchy, and energy data. Run `python -m app.sync` to refresh meter and transformer data from the portal.",
     "version": "1.0.0"
   },
   "paths": {
@@ -11,29 +11,31 @@
         "tags": [
           "meter data"
         ],
-        "summary": "List meters",
+        "summary": "List synchronized meters",
         "operationId": "meters_api_v1_meters_get",
         "parameters": [
           {
-            "name": "status",
+            "name": "search",
             "in": "query",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
                 },
                 {
                   "type": "null"
                 }
               ],
-              "description": "Exact status match",
-              "title": "Status"
+              "description": "Substring match for meter ID or serial number",
+              "title": "Search"
             },
-            "description": "Exact status match"
+            "description": "Substring match for meter ID or serial number"
           },
           {
-            "name": "network_node_id",
+            "name": "install_status",
             "in": "query",
             "required": false,
             "schema": {
@@ -45,8 +47,64 @@
                   "type": "null"
                 }
               ],
-              "title": "Network Node Id"
-            }
+              "description": "Exact portal installation status",
+              "title": "Install Status"
+            },
+            "description": "Exact portal installation status"
+          },
+          {
+            "name": "make",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact manufacturer match",
+              "title": "Make"
+            },
+            "description": "Exact manufacturer match"
+          },
+          {
+            "name": "phase_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Exact phase type: single or three",
+              "title": "Phase Type"
+            },
+            "description": "Exact phase type: single or three"
+          },
+          {
+            "name": "dt_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Distribution-transformer code",
+              "title": "Dt Code"
+            },
+            "description": "Distribution-transformer code"
           },
           {
             "name": "limit",
@@ -101,7 +159,7 @@
         "tags": [
           "meter data"
         ],
-        "summary": "Get a meter",
+        "summary": "Get a meter and its network path",
         "operationId": "meter_api_v1_meters__meter_id__get",
         "parameters": [
           {
@@ -138,12 +196,84 @@
         }
       }
     },
+    "/api/v1/transformers": {
+      "get": {
+        "tags": [
+          "meter data"
+        ],
+        "summary": "List distribution transformers",
+        "operationId": "transformers_api_v1_transformers_get",
+        "parameters": [
+          {
+            "name": "feeder_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Feeder Code"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TransformerPage"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/meters/{meter_id}/readings": {
       "get": {
         "tags": [
           "meter data"
         ],
-        "summary": "Get meter consumption readings",
+        "summary": "Get recent meter energy readings",
         "operationId": "readings_api_v1_meters__meter_id__readings_get",
         "parameters": [
           {
@@ -169,10 +299,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Inclusive ISO 8601 start timestamp",
+              "description": "Inclusive ISO 8601 timestamp",
               "title": "Start"
             },
-            "description": "Inclusive ISO 8601 start timestamp"
+            "description": "Inclusive ISO 8601 timestamp"
           },
           {
             "name": "end",
@@ -188,10 +318,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Inclusive ISO 8601 end timestamp",
+              "description": "Inclusive ISO 8601 timestamp",
               "title": "End"
             },
-            "description": "Inclusive ISO 8601 end timestamp"
+            "description": "Inclusive ISO 8601 timestamp"
           },
           {
             "name": "limit",
@@ -217,49 +347,6 @@
                     "$ref": "#/components/schemas/ReadingOut"
                   },
                   "title": "Response Readings Api V1 Meters  Meter Id  Readings Get"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/imports": {
-      "post": {
-        "tags": [
-          "meter data",
-          "data ingestion"
-        ],
-        "summary": "Import a normalized data snapshot",
-        "description": "Local ingestion seam for a future portal-specific adapter; not portal write access.",
-        "operationId": "imports_api_v1_imports_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ImportBatch"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ImportResult"
                 }
               }
             }
@@ -312,216 +399,6 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
-      "ImportBatch": {
-        "properties": {
-          "network_nodes": {
-            "items": {
-              "$ref": "#/components/schemas/ImportNode"
-            },
-            "type": "array",
-            "title": "Network Nodes",
-            "default": []
-          },
-          "meters": {
-            "items": {
-              "$ref": "#/components/schemas/ImportMeter"
-            },
-            "type": "array",
-            "title": "Meters",
-            "default": []
-          }
-        },
-        "type": "object",
-        "title": "ImportBatch"
-      },
-      "ImportMeter": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Id"
-          },
-          "serial_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Serial Number"
-          },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
-          },
-          "meter_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Meter Type"
-          },
-          "latitude": {
-            "anyOf": [
-              {
-                "type": "number",
-                "maximum": 90.0,
-                "minimum": -90.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Latitude"
-          },
-          "longitude": {
-            "anyOf": [
-              {
-                "type": "number",
-                "maximum": 180.0,
-                "minimum": -180.0
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Longitude"
-          },
-          "installed_on": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Installed On"
-          },
-          "network_node_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Network Node Id"
-          },
-          "readings": {
-            "items": {
-              "$ref": "#/components/schemas/ImportReading"
-            },
-            "type": "array",
-            "title": "Readings",
-            "default": []
-          }
-        },
-        "type": "object",
-        "required": [
-          "id"
-        ],
-        "title": "ImportMeter"
-      },
-      "ImportNode": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Id"
-          },
-          "name": {
-            "type": "string",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Name"
-          },
-          "node_type": {
-            "type": "string",
-            "maxLength": 50,
-            "minLength": 1,
-            "title": "Node Type"
-          },
-          "parent_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parent Id"
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "name",
-          "node_type"
-        ],
-        "title": "ImportNode"
-      },
-      "ImportReading": {
-        "properties": {
-          "recorded_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Recorded At"
-          },
-          "consumption_kwh": {
-            "type": "number",
-            "minimum": 0.0,
-            "title": "Consumption Kwh"
-          }
-        },
-        "type": "object",
-        "required": [
-          "recorded_at",
-          "consumption_kwh"
-        ],
-        "title": "ImportReading"
-      },
-      "ImportResult": {
-        "properties": {
-          "nodes_upserted": {
-            "type": "integer",
-            "title": "Nodes Upserted"
-          },
-          "meters_upserted": {
-            "type": "integer",
-            "title": "Meters Upserted"
-          },
-          "readings_upserted": {
-            "type": "integer",
-            "title": "Readings Upserted"
-          }
-        },
-        "type": "object",
-        "required": [
-          "nodes_upserted",
-          "meters_upserted",
-          "readings_upserted"
-        ],
-        "title": "ImportResult"
-      },
       "MeterDetail": {
         "properties": {
           "id": {
@@ -529,105 +406,62 @@
             "title": "Id"
           },
           "serial_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Serial Number"
           },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
+          "make": {
+            "type": "string",
+            "title": "Make"
           },
-          "meter_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Meter Type"
+          "phase_type": {
+            "type": "string",
+            "title": "Phase Type"
+          },
+          "install_status": {
+            "type": "string",
+            "title": "Install Status"
+          },
+          "install_type": {
+            "type": "string",
+            "title": "Install Type"
+          },
+          "build": {
+            "type": "string",
+            "title": "Build"
+          },
+          "dt_code": {
+            "type": "string",
+            "title": "Dt Code"
           },
           "latitude": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "number",
             "title": "Latitude"
           },
           "longitude": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "number",
             "title": "Longitude"
           },
-          "installed_on": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Installed On"
-          },
-          "network_node_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Network Node Id"
-          },
-          "network_node": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/NetworkNodeOut"
-              },
-              {
-                "type": "null"
-              }
-            ]
+          "network_hierarchy": {
+            "items": {
+              "$ref": "#/components/schemas/NetworkNodeOut"
+            },
+            "type": "array",
+            "title": "Network Hierarchy"
           }
         },
         "type": "object",
         "required": [
           "id",
           "serial_number",
-          "status",
-          "meter_type",
+          "make",
+          "phase_type",
+          "install_status",
+          "install_type",
+          "build",
+          "dt_code",
           "latitude",
           "longitude",
-          "installed_on",
-          "network_node_id",
-          "network_node"
+          "network_hierarchy"
         ],
         "title": "MeterDetail"
       },
@@ -638,94 +472,54 @@
             "title": "Id"
           },
           "serial_number": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "string",
             "title": "Serial Number"
           },
-          "status": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Status"
+          "make": {
+            "type": "string",
+            "title": "Make"
           },
-          "meter_type": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Meter Type"
+          "phase_type": {
+            "type": "string",
+            "title": "Phase Type"
+          },
+          "install_status": {
+            "type": "string",
+            "title": "Install Status"
+          },
+          "install_type": {
+            "type": "string",
+            "title": "Install Type"
+          },
+          "build": {
+            "type": "string",
+            "title": "Build"
+          },
+          "dt_code": {
+            "type": "string",
+            "title": "Dt Code"
           },
           "latitude": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "number",
             "title": "Latitude"
           },
           "longitude": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
+            "type": "number",
             "title": "Longitude"
-          },
-          "installed_on": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Installed On"
-          },
-          "network_node_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Network Node Id"
           }
         },
         "type": "object",
         "required": [
           "id",
           "serial_number",
-          "status",
-          "meter_type",
+          "make",
+          "phase_type",
+          "install_status",
+          "install_type",
+          "build",
+          "dt_code",
           "latitude",
-          "longitude",
-          "installed_on",
-          "network_node_id"
+          "longitude"
         ],
         "title": "MeterOut"
       },
@@ -762,9 +556,9 @@
       },
       "NetworkNodeOut": {
         "properties": {
-          "id": {
+          "code": {
             "type": "string",
-            "title": "Id"
+            "title": "Code"
           },
           "name": {
             "type": "string",
@@ -788,7 +582,7 @@
         },
         "type": "object",
         "required": [
-          "id",
+          "code",
           "name",
           "node_type",
           "parent_id"
@@ -801,17 +595,114 @@
             "type": "string",
             "title": "Recorded At"
           },
-          "consumption_kwh": {
-            "type": "number",
-            "title": "Consumption Kwh"
+          "kwh": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kwh"
+          },
+          "kvah": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kvah"
+          },
+          "voltage_r": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Voltage R"
           }
         },
         "type": "object",
         "required": [
           "recorded_at",
-          "consumption_kwh"
+          "kwh",
+          "kvah",
+          "voltage_r"
         ],
         "title": "ReadingOut"
+      },
+      "TransformerOut": {
+        "properties": {
+          "code": {
+            "type": "string",
+            "title": "Code"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "feeder_code": {
+            "type": "string",
+            "title": "Feeder Code"
+          },
+          "capacity_kva": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Capacity Kva"
+          }
+        },
+        "type": "object",
+        "required": [
+          "code",
+          "name",
+          "feeder_code",
+          "capacity_kva"
+        ],
+        "title": "TransformerOut"
+      },
+      "TransformerPage": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TransformerOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          }
+        },
+        "type": "object",
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "TransformerPage"
       },
       "ValidationError": {
         "properties": {
