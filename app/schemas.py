@@ -1,45 +1,42 @@
-"""Public response and import shapes. These are our API contract, not portal claims."""
+"""Stable public response schemas, normalized from the portal's source field names."""
 
-from datetime import date, datetime, timezone
+from datetime import datetime, timezone
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 
 class NetworkNodeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    id: str
+    code: str
     name: str
     node_type: str
     parent_id: str | None
 
 
-class ReadingOut(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    recorded_at: datetime
-    consumption_kwh: float
-
-    @field_serializer("recorded_at")
-    def serialize_timestamp(self, value: datetime) -> str:
-        # SQLite drops timezone metadata. Values are normalized to UTC on import.
-        if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
-        return value.isoformat().replace("+00:00", "Z")
-
-
 class MeterOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: str
-    serial_number: str | None
-    status: str | None
-    meter_type: str | None
-    latitude: float | None
-    longitude: float | None
-    installed_on: date | None
-    network_node_id: str | None
+    serial_number: str
+    make: str
+    phase_type: str
+    install_status: str
+    install_type: str
+    build: str
+    dt_code: str
+    latitude: float
+    longitude: float
 
 
 class MeterDetail(MeterOut):
-    network_node: NetworkNodeOut | None
+    network_hierarchy: list[NetworkNodeOut]
+
+
+class TransformerOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    code: str
+    name: str
+    feeder_code: str
+    capacity_kva: float | None
 
 
 class MeterPage(BaseModel):
@@ -49,43 +46,36 @@ class MeterPage(BaseModel):
     offset: int
 
 
-class ImportNode(BaseModel):
-    id: str = Field(min_length=1, max_length=100)
-    name: str = Field(min_length=1, max_length=200)
-    node_type: str = Field(min_length=1, max_length=50)
-    parent_id: str | None = None
+class TransformerPage(BaseModel):
+    items: list[TransformerOut]
+    total: int
+    limit: int
+    offset: int
 
 
-class ImportReading(BaseModel):
+class ReadingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
     recorded_at: datetime
-    consumption_kwh: float = Field(ge=0)
+    kwh: float | None
+    kvah: float | None
+    voltage_r: float | None = Field(validation_alias="volt_r")
 
-    @field_validator("recorded_at")
-    @classmethod
-    def normalize_timestamp(cls, value: datetime) -> datetime:
+    @field_serializer("recorded_at")
+    def serialize_timestamp(self, value: datetime) -> str:
+        # The portal displays local Jaipur time. The database stores the same instant in UTC.
         if value.tzinfo is None:
-            raise ValueError("recorded_at must include a timezone offset")
-        return value.astimezone(timezone.utc).replace(tzinfo=None)
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-class ImportMeter(BaseModel):
-    id: str = Field(min_length=1, max_length=100)
-    serial_number: str | None = None
-    status: str | None = None
-    meter_type: str | None = None
-    latitude: float | None = Field(default=None, ge=-90, le=90)
-    longitude: float | None = Field(default=None, ge=-180, le=180)
-    installed_on: date | None = None
-    network_node_id: str | None = None
-    readings: list[ImportReading] = []
+class SyncResult(BaseModel):
+    meters_synced: int
+    network_nodes_synced: int
+    transformers_synced: int
+    synced_at: datetime
 
-
-class ImportBatch(BaseModel):
-    network_nodes: list[ImportNode] = []
-    meters: list[ImportMeter] = []
-
-
-class ImportResult(BaseModel):
-    nodes_upserted: int
-    meters_upserted: int
-    readings_upserted: int
+    @field_serializer("synced_at")
+    def serialize_synced_at(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
